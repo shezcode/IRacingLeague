@@ -1,0 +1,10 @@
+# Keep the build context lean and reproducible: never ship build outputs or
+# host-side runtime state into the image (data/ and logs/ live on the volume).
+**/bin/
+**/obj/
+data/
+**/data/
+logs/
+**/logs/
+.git/
+.vs/
