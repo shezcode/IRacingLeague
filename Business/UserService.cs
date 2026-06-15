@@ -14,7 +14,7 @@ public class UserService : IUserService
 
     public User Create(string userName, string email, string password, string role, string tag, string licenseClass)
     {
-        var user = new User(userName, email, password, role, tag, licenseClass);
+        var user = new User(userName, email, PasswordHasher.Hash(password), role, tag, licenseClass);
         _repository.Add(user);
         _repository.SaveChanges();
         return user;
@@ -43,6 +43,9 @@ public class UserService : IUserService
         _repository.Update(user);
         _repository.SaveChanges();
     }
+
+    public bool VerifyPassword(User user, string password) =>
+        user.Password == PasswordHasher.Hash(password);
 
     public void Delete(int id)
     {

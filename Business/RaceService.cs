@@ -14,13 +14,14 @@ public class RaceService : IRaceService
         _leagues = leagues;
     }
 
-    public Race Create(int leagueId, string track, string car, DateTime scheduledAt, int lapCount, decimal ambientTempC, int round)
+    public Race Create(int leagueId, string track, string car, DateTime scheduledAt, int lapCount, decimal ambientTempC)
     {
         if (_leagues.Get(leagueId) == null)
             throw new KeyNotFoundException($"League with id {leagueId} not found.");
 
-        var race = new Race(leagueId, track, car, scheduledAt, lapCount, ambientTempC, round);
+        var race = new Race(leagueId, track, car, scheduledAt, lapCount, ambientTempC);
         _races.Add(race);
+        RenumberRounds(leagueId);
         _races.SaveChanges();
         return race;
     }
@@ -46,9 +47,33 @@ public class RaceService : IRaceService
 
     public void Delete(int id)
     {
-        if (_races.Get(id) == null)
+        var race = _races.Get(id);
+        if (race == null)
             throw new KeyNotFoundException($"Race with id {id} not found.");
         _races.Delete(id);
+        RenumberRounds(race.LeagueId);
         _races.SaveChanges();
+    }
+
+    // Rounds are derived from chronological order rather than entered manually,
+    // so every add/delete re-walks the league's races and reassigns 1, 2, 3...
+    // Ties on identical ScheduledAt break by RaceId for a stable order.
+    private void RenumberRounds(int leagueId)
+    {
+        var races = _races.GetAll()
+            .Where(r => r.LeagueId == leagueId)
+            .OrderBy(r => r.ScheduledAt)
+            .ThenBy(r => r.RaceId)
+            .ToList();
+
+        for (int i = 0; i < races.Count; i++)
+        {
+            int round = i + 1;
+            if (races[i].Round != round)
+            {
+                races[i].Round = round;
+                _races.Update(races[i]);
+            }
+        }
     }
 }

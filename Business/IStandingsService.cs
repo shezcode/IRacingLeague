@@ -4,5 +4,5 @@ namespace IRacingLeague.Business;
 
 public interface IStandingsService
 {
-    IEnumerable<Registration> GetStandings(int leagueId);
+    IEnumerable<StandingEntry> GetStandings(int leagueId);
 }

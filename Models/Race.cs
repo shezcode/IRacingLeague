@@ -15,7 +15,7 @@ public class Race
     // Parameterless ctor kept for JSON (de)serialization in a later step.
     public Race() { }
 
-    public Race(int leagueId, string track, string car, DateTime scheduledAt, int lapCount, decimal ambientTempC, int round)
+    public Race(int leagueId, string track, string car, DateTime scheduledAt, int lapCount, decimal ambientTempC)
     {
         LeagueId = leagueId;
         Track = track;
@@ -23,7 +23,6 @@ public class Race
         ScheduledAt = scheduledAt;
         LapCount = lapCount;
         AmbientTempC = ambientTempC;
-        Round = round;
         IsCompleted = false;
     }
 

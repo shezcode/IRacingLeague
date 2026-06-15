@@ -8,6 +8,7 @@ public interface IUserService
     IEnumerable<User> GetAll();
     IEnumerable<User> SearchByTag(string tag);
     User GetById(int id);
+    bool VerifyPassword(User user, string password);
     void Update(User user);
     void Delete(int id);
 }

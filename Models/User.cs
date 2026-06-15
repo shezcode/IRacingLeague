@@ -5,7 +5,7 @@ public class User
     public int UserId { get; set; }
     public string UserName { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
-    public string Password { get; set; } = string.Empty;   // SHA256 hash in the API; plain placeholder in the CLI
+    public string Password { get; set; } = string.Empty;   // SHA256 hash
     public string Role { get; set; } = "Driver";            // Admin / Driver / Guest
     public string Tag { get; set; } = string.Empty;
     public int IRating { get; set; }                        // global, recomputed from results
@@ -50,6 +50,23 @@ public class User
             TotalWins++;
 
         SafetyRating -= incidentPoints * 0.05m;
+        if (SafetyRating < 0m) SafetyRating = 0m;
+        if (SafetyRating > 4.99m) SafetyRating = 4.99m;
+    }
+
+    /// <summary>
+    /// Inverse of ApplyRaceOutcome — used by ResultService.ApplyResult to back out
+    /// a previously-applied outcome before applying an edited one.
+    /// </summary>
+    public void UndoRaceOutcome(int position, int incidentPoints)
+    {
+        int iRatingDelta = Math.Max(50 - (position - 1) * 10, -30);
+        IRating -= iRatingDelta;
+
+        if (position == 1)
+            TotalWins--;
+
+        SafetyRating += incidentPoints * 0.05m;
         if (SafetyRating < 0m) SafetyRating = 0m;
         if (SafetyRating > 4.99m) SafetyRating = 4.99m;
     }
