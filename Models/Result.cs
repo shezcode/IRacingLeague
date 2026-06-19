@@ -9,6 +9,7 @@ public class Result
     public decimal FastestLapSeconds { get; set; }
     public int Points { get; set; }           // points awarded for this race
     public int IncidentPoints { get; set; }   // iRacing "x" incidents
+    public int LapsCompleted { get; set; }    // laps finished — distance proxy for Safety Rating
     public bool Dnf { get; set; }
     public string Notes { get; set; } = string.Empty;
     public DateTime FinishedAt { get; set; }
@@ -17,7 +18,7 @@ public class Result
     public Result() { }
 
     public Result(int registrationId, int raceId, int position, decimal fastestLapSeconds,
-                  int points, int incidentPoints, bool dnf, string notes)
+                  int points, int incidentPoints, int lapsCompleted, bool dnf, string notes)
     {
         RegistrationId = registrationId;
         RaceId = raceId;
@@ -25,6 +26,7 @@ public class Result
         FastestLapSeconds = fastestLapSeconds;
         Points = points;
         IncidentPoints = incidentPoints;
+        LapsCompleted = lapsCompleted;
         Dnf = dnf;
         Notes = notes;
         FinishedAt = DateTime.Now;
@@ -32,5 +34,5 @@ public class Result
 
     public override string ToString() =>
         $"[{ResultId}] reg #{RegistrationId} race #{RaceId} — P{Position}, {Points} pts, " +
-        $"{IncidentPoints}x, FL {FastestLapSeconds:0.###}s{(Dnf ? ", DNF" : "")}";
+        $"{IncidentPoints}x over {LapsCompleted} laps, FL {FastestLapSeconds:0.###}s{(Dnf ? ", DNF" : "")}";
 }

@@ -33,12 +33,13 @@ public class ResultService : IResultService
         if (existing != null)
         {
             registration.Points += result.Points - existing.Points;
-            user.UndoRaceOutcome(existing.Position, existing.IncidentPoints);
+            user.UndoRaceOutcome(existing.Position, existing.IncidentPoints, existing.LapsCompleted);
 
             existing.Position = result.Position;
             existing.FastestLapSeconds = result.FastestLapSeconds;
             existing.Points = result.Points;
             existing.IncidentPoints = result.IncidentPoints;
+            existing.LapsCompleted = result.LapsCompleted;
             existing.Dnf = result.Dnf;
             existing.Notes = result.Notes;
             existing.FinishedAt = result.FinishedAt;
@@ -53,7 +54,7 @@ public class ResultService : IResultService
         }
         _results.SaveChanges();
 
-        user.ApplyRaceOutcome(result.Position, result.IncidentPoints);
+        user.ApplyRaceOutcome(result.Position, result.IncidentPoints, result.LapsCompleted);
         _users.Update(user);
         _users.SaveChanges();
 

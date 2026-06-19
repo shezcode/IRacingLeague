@@ -1,25 +1,26 @@
 namespace IRacingLeague.Presentation;
 
-/// <summary>
-/// Centralized error log. Appends timestamped lines to logs/errors.log so the
-/// menu never has to know how errors are persisted. The logs/ directory is the
-/// second Docker volume in the containerization step.
-/// </summary>
 public static class Log
 {
-    private const string LogDirectory = "logs";
-    private static readonly string LogFile = Path.Combine(LogDirectory, "errors.log");
-    private static readonly object Sync = new();
+  private static string _logDirectory = "logs";
+  private static string LogFile => Path.Combine(_logDirectory, "errors.log");
+  private static readonly object Sync = new();
 
-    public static void Error(string message)
+  public static void Configure(string environment)
+  {
+    lock (Sync)
+      _logDirectory = Path.Combine("logs", environment);
+  }
+
+  public static void Error(string message)
+  {
+    lock (Sync)
     {
-        lock (Sync)
-        {
-            Directory.CreateDirectory(LogDirectory);
-            File.AppendAllText(LogFile,
-                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [ERROR] {message}{Environment.NewLine}");
-        }
+      Directory.CreateDirectory(_logDirectory);
+      File.AppendAllText(LogFile,
+          $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [ERROR] {message}{Environment.NewLine}");
     }
+  }
 
-    public static void Error(Exception ex) => Error(ex.Message);
+  public static void Error(Exception ex) => Error(ex.Message);
 }

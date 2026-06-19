@@ -15,7 +15,7 @@ public class MenuApp
   private readonly AppConfig _config;
 
   // A single "active driver", set after password verification in Login(), is the
-  // logged-in identity that unlocks the private zone and owns the leagues created
+  // logged in identity that unlocks the private zone and owns the leagues created
   // while it is selected.
   private User? _activeUser;
 
@@ -276,6 +276,7 @@ public class MenuApp
     if (!_userService.VerifyPassword(selected, password))
     {
       AnsiConsole.MarkupLine("[red]Incorrect password.[/]");
+      Log.Error($"Incorrect password attempt for {selected.UserName}");
       return;
     }
 
@@ -356,14 +357,17 @@ public class MenuApp
     catch (DuplicateRegistrationException ex)
     {
       AnsiConsole.MarkupLineInterpolated($"[red]Cannot join: {ex.Message}[/]");
+      Log.Error(ex);
     }
     catch (LeagueFullException ex)
     {
       AnsiConsole.MarkupLineInterpolated($"[red]Cannot join: {ex.Message}[/]");
+      Log.Error(ex);
     }
     catch (KeyNotFoundException ex)
     {
       AnsiConsole.MarkupLineInterpolated($"[red]Cannot join: {ex.Message}[/]");
+      Log.Error(ex);
     }
   }
 
@@ -379,6 +383,8 @@ public class MenuApp
       return;
     }
 
+    const string cancel = "Back";
+
     var byLabel = new Dictionary<string, User>();
     var prompt = new SelectionPrompt<string>()
         .Title("[green]Add driver[/] — select a driver to register")
@@ -389,7 +395,11 @@ public class MenuApp
       byLabel[label] = u;
       prompt.AddChoice(label);
     }
-    var selected = byLabel[AnsiConsole.Prompt(prompt)];
+    prompt.AddChoice(cancel);
+
+    string choice = AnsiConsole.Prompt(prompt);
+    if (choice == cancel) return;
+    var selected = byLabel[choice];
 
     int carNumber = AskInt("Car number:");
     string teamName = AskText("Team name:");
@@ -403,10 +413,12 @@ public class MenuApp
     catch (DuplicateRegistrationException ex)
     {
       AnsiConsole.MarkupLineInterpolated($"[red]Cannot add driver: {ex.Message}[/]");
+      Log.Error(ex);
     }
     catch (LeagueFullException ex)
     {
       AnsiConsole.MarkupLineInterpolated($"[red]Cannot add driver: {ex.Message}[/]");
+      Log.Error(ex);
     }
   }
 
@@ -487,7 +499,9 @@ public class MenuApp
 
   private void ScheduleRaceFor(League league)
   {
-    string track = AskText("Track:");
+    // Leaving the first field blank is the way out of the whole entry chain.
+    string? track = AskTextOrBack("Track (blank to go back):");
+    if (track is null) return;
     string car = AskText("Car:");
     DateTime scheduledAt = AskDateTime("Scheduled at (yyyy-MM-dd HH:mm):");
     int lapCount = AskInt("Lap count:");
@@ -506,20 +520,26 @@ public class MenuApp
       return;
     }
     ShowRaces(league.LeagueId);
-    int raceId = AskInt("Race id:");
 
-    Race race;
-    try { race = _raceService.GetById(raceId); }
-    catch (KeyNotFoundException ex)
+    const string back = "Back";
+
+    // Pick from this league's own races/members: a "Back" choice is the way out,
+    // and the closed lists guarantee the selection belongs to this league.
+    var raceByLabel = new Dictionary<string, Race>();
+    var racePrompt = new SelectionPrompt<string>()
+        .Title("[green]Enter result[/] — select a race")
+        .HighlightStyle(new Style(foreground: Color.Green));
+    foreach (var r in races)
     {
-      AnsiConsole.MarkupLineInterpolated($"[red]Cannot record result: {ex.Message}[/]");
-      return;
+      string label = $"#{r.RaceId} round {r.Round} — {Markup.Escape(r.Track)}";
+      raceByLabel[label] = r;
+      racePrompt.AddChoice(label);
     }
-    if (race.LeagueId != league.LeagueId)
-    {
-      AnsiConsole.MarkupLineInterpolated($"[red]Cannot record result: race #{raceId} does not belong to this league.[/]");
-      return;
-    }
+    racePrompt.AddChoice(back);
+
+    string raceChoice = AnsiConsole.Prompt(racePrompt);
+    if (raceChoice == back) return;
+    Race race = raceByLabel[raceChoice];
 
     var members = _registrationService.GetByLeague(league.LeagueId).ToList();
     if (members.Count == 0)
@@ -528,29 +548,34 @@ public class MenuApp
       return;
     }
     ViewMembersTable(league.LeagueId, members);
-    int registrationId = AskInt("Registration id:");
 
-    Registration registration;
-    try { registration = _registrationService.GetById(registrationId); }
-    catch (KeyNotFoundException ex)
+    var regByLabel = new Dictionary<string, Registration>();
+    var regPrompt = new SelectionPrompt<string>()
+        .Title("[green]Enter result[/] — select a driver")
+        .HighlightStyle(new Style(foreground: Color.Green));
+    foreach (var m in members)
     {
-      AnsiConsole.MarkupLineInterpolated($"[red]Cannot record result: {ex.Message}[/]");
-      return;
+      string label = $"#{m.RegistrationId} {Markup.Escape(DriverName(m.UserId))} (car {m.CarNumber})";
+      regByLabel[label] = m;
+      regPrompt.AddChoice(label);
     }
-    if (registration.LeagueId != league.LeagueId)
-    {
-      AnsiConsole.MarkupLineInterpolated($"[red]Cannot record result: registration #{registrationId} does not belong to this league.[/]");
-      return;
-    }
+    regPrompt.AddChoice(back);
+
+    string regChoice = AnsiConsole.Prompt(regPrompt);
+    if (regChoice == back) return;
+    Registration registration = regByLabel[regChoice];
 
     int position = AskInt("Finishing position:");
     decimal fastestLap = AskDecimal("Fastest lap (seconds):");
     int points = AskInt("Points awarded:");
     int incidents = AskInt("Incident points:");
+    int lapsCompleted = AskInt($"Laps completed (of {race.LapCount}):");
+    if (lapsCompleted < 0) lapsCompleted = 0;
+    if (lapsCompleted > race.LapCount) lapsCompleted = race.LapCount;
     bool dnf = AnsiConsole.Confirm("DNF?", defaultValue: false);
     string notes = AskOptional("Notes (optional):", string.Empty);
 
-    var result = new Result(registrationId, raceId, position, fastestLap, points, incidents, dnf, notes);
+    var result = new Result(registration.RegistrationId, race.RaceId, position, fastestLap, points, incidents, lapsCompleted, dnf, notes);
     _resultService.ApplyResult(registration, race, result);
     AnsiConsole.MarkupLineInterpolated($"[green]Result recorded:[/] {result}");
     AnsiConsole.MarkupLineInterpolated($"  [grey]League standing now:[/] {registration}");
@@ -680,6 +705,13 @@ public class MenuApp
           .Validate(s => string.IsNullOrWhiteSpace(s)
               ? ValidationResult.Error("[red]Value cannot be empty[/]")
               : ValidationResult.Success()));
+
+  // Like AskText, but a blank entry means "go back" and yields null.
+  private static string? AskTextOrBack(string label)
+  {
+    string value = AnsiConsole.Prompt(new TextPrompt<string>(label).AllowEmpty());
+    return string.IsNullOrWhiteSpace(value) ? null : value;
+  }
 
   private static string AskOptional(string label, string fallback) =>
       AnsiConsole.Prompt(new TextPrompt<string>(label)
