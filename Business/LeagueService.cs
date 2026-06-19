@@ -6,10 +6,14 @@ namespace IRacingLeague.Business;
 public class LeagueService : ILeagueService
 {
     private readonly ILeagueRepository _repository;
+    private readonly IRaceService _races;
+    private readonly IRegistrationRepository _registrations;
 
-    public LeagueService(ILeagueRepository repository)
+    public LeagueService(ILeagueRepository repository, IRaceService races, IRegistrationRepository registrations)
     {
         _repository = repository;
+        _races = races;
+        _registrations = registrations;
     }
 
     public League Create(string name, string discipline, bool isPublic, int maxDrivers, decimal entryFee, int ownerUserId = 0)
@@ -57,6 +61,16 @@ public class LeagueService : ILeagueService
     {
         if (_repository.Get(id) == null)
             throw new KeyNotFoundException($"League with id {id} not found.");
+
+        // Cascade: drop the league's races (each in turn drops its results and
+        // reverts the affected drivers' global stats) and its registrations, so a
+        // deleted league leaves no orphaned races, results, or memberships behind.
+        foreach (var race in _races.GetByLeague(id).ToList())
+            _races.Delete(race.RaceId);
+        foreach (var registration in _registrations.GetAll().Where(r => r.LeagueId == id).ToList())
+            _registrations.Delete(registration.RegistrationId);
+        _registrations.SaveChanges();
+
         _repository.Delete(id);
         _repository.SaveChanges();
     }

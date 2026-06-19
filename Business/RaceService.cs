@@ -7,11 +7,13 @@ public class RaceService : IRaceService
 {
     private readonly IRaceRepository _races;
     private readonly ILeagueRepository _leagues;
+    private readonly IResultService _results;
 
-    public RaceService(IRaceRepository races, ILeagueRepository leagues)
+    public RaceService(IRaceRepository races, ILeagueRepository leagues, IResultService results)
     {
         _races = races;
         _leagues = leagues;
+        _results = results;
     }
 
     public Race Create(int leagueId, string track, string car, DateTime scheduledAt, int lapCount, decimal ambientTempC)
@@ -50,6 +52,9 @@ public class RaceService : IRaceService
         var race = _races.Get(id);
         if (race == null)
             throw new KeyNotFoundException($"Race with id {id} not found.");
+        // Cascade: a race's results carry standings points and driver stats, so drop
+        // them (reverting their effects) before the race itself disappears.
+        _results.DeleteByRace(id);
         _races.Delete(id);
         RenumberRounds(race.LeagueId);
         _races.SaveChanges();

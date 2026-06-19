@@ -6,10 +6,14 @@ namespace IRacingLeague.Business;
 public class UserService : IUserService
 {
     private readonly IUserRepository _repository;
+    private readonly IRegistrationRepository _registrations;
+    private readonly IResultService _results;
 
-    public UserService(IUserRepository repository)
+    public UserService(IUserRepository repository, IRegistrationRepository registrations, IResultService results)
     {
         _repository = repository;
+        _registrations = registrations;
+        _results = results;
     }
 
     public User Create(string userName, string email, string password, string role, string tag, string licenseClass)
@@ -51,6 +55,17 @@ public class UserService : IUserService
     {
         if (_repository.Get(id) == null)
             throw new KeyNotFoundException($"User with id {id} not found.");
+
+        // Cascade: remove the driver's league memberships and every result tied to
+        // them, so deleting a profile leaves no orphaned registrations or results
+        // behind. Leagues the driver owns are guarded against in the caller.
+        foreach (var registration in _registrations.GetAll().Where(r => r.UserId == id).ToList())
+        {
+            _results.DeleteByRegistration(registration.RegistrationId);
+            _registrations.Delete(registration.RegistrationId);
+        }
+        _registrations.SaveChanges();
+
         _repository.Delete(id);
         _repository.SaveChanges();
     }

@@ -217,12 +217,18 @@ public class MenuApp
     while (true)
     {
       AnsiConsole.MarkupLineInterpolated($"[green]Private zone[/] — [grey]driver[/] {_activeUser}");
+
+      // Admins get an account-wide tool for removing driver profiles; everyone
+      // else only ever manages their own world.
+      var choices = new List<string> { "My leagues", "Create league", "Join a league", "My profile & stats" };
+      if (IsAdmin) choices.Add("Delete a driver (admin)");
+      choices.AddRange(new[] { "Switch driver", "Log out", "Back" });
+
       var choice = AnsiConsole.Prompt(
           new SelectionPrompt<string>()
               .Title("[green]Private zone[/]")
               .HighlightStyle(new Style(foreground: Color.Green))
-              .AddChoices("My leagues", "Create league", "Join a league",
-                          "My profile & stats", "Switch driver", "Log out", "Back"));
+              .AddChoices(choices));
 
       switch (choice)
       {
@@ -230,6 +236,7 @@ public class MenuApp
         case "Create league": Safe(CreateLeague); break;
         case "Join a league": Safe(JoinLeague); break;
         case "My profile & stats": Safe(MyProfile); break;
+        case "Delete a driver (admin)": Safe(DeleteDriver); break;
         case "Switch driver": Login(); break;
         case "Log out":
           _activeUser = null;
@@ -316,6 +323,65 @@ public class MenuApp
       table.AddRow(Markup.Escape(LeagueName(r.LeagueId)), r.CarNumber.ToString(),
           Markup.Escape(r.TeamName), r.Points.ToString(), $"{r.BallastKg:0.##}");
     AnsiConsole.Write(table);
+  }
+
+  // Admin-only: remove a driver profile. Deleting a driver cascades their league
+  // memberships and race results (handled in UserService); a driver who owns
+  // leagues is blocked so those leagues aren't left without a valid owner.
+  private void DeleteDriver()
+  {
+    if (!IsAdmin)
+    {
+      AnsiConsole.MarkupLine("[yellow]Only admins can delete driver profiles.[/]");
+      return;
+    }
+
+    // You can't delete the profile you're logged in as.
+    var drivers = _userService.GetAll().Where(u => u.UserId != _activeUser!.UserId).ToList();
+    if (drivers.Count == 0)
+    {
+      AnsiConsole.MarkupLine("[grey]No other drivers to delete.[/]");
+      return;
+    }
+    RenderDrivers(drivers);
+
+    const string back = "Back";
+    var byLabel = new Dictionary<string, User>();
+    var prompt = new SelectionPrompt<string>()
+        .Title("[red]Delete driver[/] — select a profile to remove")
+        .HighlightStyle(new Style(foreground: Color.Red));
+    foreach (var d in drivers)
+    {
+      string label = $"#{d.UserId} {d.UserName} ({d.Tag}) — {d.Role}";
+      byLabel[label] = d;
+      prompt.AddChoice(label);
+    }
+    prompt.AddChoice(back);
+
+    string choice = AnsiConsole.Prompt(prompt);
+    if (choice == back) return;
+    var driver = byLabel[choice];
+
+    var owned = _leagueService.GetOwnedBy(driver.UserId).ToList();
+    if (owned.Count > 0)
+    {
+      string names = string.Join(", ", owned.Select(l => l.Name));
+      AnsiConsole.MarkupLineInterpolated(
+          $"[yellow]Driver #{driver.UserId} owns {owned.Count} league(s): {names}. Delete or hand off those leagues first.[/]");
+      return;
+    }
+
+    int regCount = _registrationService.GetByUser(driver.UserId).Count();
+    string warn = regCount > 0
+        ? $" This also removes {regCount} league membership(s) and all their race results."
+        : string.Empty;
+    if (!AnsiConsole.Confirm(
+            $"Delete driver '{Markup.Escape(driver.UserName)}' (#{driver.UserId})?{warn} This cannot be undone.",
+            defaultValue: false))
+      return;
+
+    _userService.Delete(driver.UserId);
+    AnsiConsole.MarkupLineInterpolated($"[green]Deleted driver[/] #{driver.UserId}.");
   }
 
   private void CreateLeague()
@@ -426,7 +492,12 @@ public class MenuApp
   {
     var ownedIds = _leagueService.GetOwnedBy(_activeUser!.UserId).Select(l => l.LeagueId).ToHashSet();
     var joinedIds = _registrationService.GetByUser(_activeUser.UserId).Select(r => r.LeagueId).ToHashSet();
-    var allIds = ownedIds.Union(joinedIds).ToList();
+    // Admins manage the whole grid, so they can open any league — not just the
+    // ones they own or have joined. Everyone else sees only their own world.
+    var allIds = (IsAdmin
+            ? _leagueService.GetAll().Select(l => l.LeagueId)
+            : ownedIds.Union(joinedIds))
+        .ToHashSet();
     if (allIds.Count == 0)
     {
       AnsiConsole.MarkupLine("[grey]You don't own or belong to any league yet. Create one or join from the menu.[/]");
@@ -442,7 +513,7 @@ public class MenuApp
     {
       string role = ownedIds.Contains(l.LeagueId)
           ? (joinedIds.Contains(l.LeagueId) ? "Owner + Member" : "Owner")
-          : "Member";
+          : joinedIds.Contains(l.LeagueId) ? "Member" : "Admin";
       table.AddRow(l.LeagueId.ToString(), Markup.Escape(l.Name), Markup.Escape(l.Discipline),
           l.IsPublic ? "public" : "[yellow]private[/]", role);
     }
@@ -462,40 +533,54 @@ public class MenuApp
     while (true)
     {
       bool isOwner = league.OwnerUserId == _activeUser!.UserId;
-      string role = isOwner ? "you are the owner" : $"owner is #{league.OwnerUserId} — view only";
+      string role = isOwner
+          ? "you are the owner"
+          : IsAdmin
+              ? $"owner is #{league.OwnerUserId} — admin access"
+              : $"owner is #{league.OwnerUserId} — view only";
       var choice = AnsiConsole.Prompt(
           new SelectionPrompt<string>()
               .Title($"[green]{Markup.Escape(league.Name)}[/] [grey]({(league.IsPublic ? "public" : "private")}, {role})[/]")
               .HighlightStyle(new Style(foreground: Color.Green))
               .AddChoices("View races", "View standings", "View members", "Add driver",
-                          "Schedule race", "Enter result", "Edit league", "Delete league", "Back"));
+                          "Schedule race", "Enter result", "Delete race", "Delete result",
+                          "Edit league", "Delete league", "Back"));
 
       switch (choice)
       {
         case "View races": Safe(() => ShowRaces(league.LeagueId)); break;
         case "View standings": Safe(() => ShowStandings(league.LeagueId)); break;
         case "View members": Safe(() => ShowMembers(league.LeagueId)); break;
-        case "Add driver": if (OwnerGuard(league)) Safe(() => AddDriver(league)); break;
-        case "Schedule race": if (OwnerGuard(league)) Safe(() => ScheduleRaceFor(league)); break;
-        case "Enter result": if (OwnerGuard(league)) Safe(() => EnterResultFor(league)); break;
-        case "Edit league": if (OwnerGuard(league)) Safe(() => EditLeague(league)); break;
+        case "Add driver": if (ManageGuard(league)) Safe(() => AddDriver(league)); break;
+        case "Schedule race": if (ManageGuard(league)) Safe(() => ScheduleRaceFor(league)); break;
+        case "Enter result": if (ManageGuard(league)) Safe(() => EnterResultFor(league)); break;
+        case "Delete race": if (ManageGuard(league)) Safe(() => DeleteRaceFor(league)); break;
+        case "Delete result": if (ManageGuard(league)) Safe(() => DeleteResultFor(league)); break;
+        case "Edit league": if (ManageGuard(league)) Safe(() => EditLeague(league)); break;
         case "Delete league":
-          if (OwnerGuard(league) && Safe(() => DeleteLeague(league))) return;
+          if (ManageGuard(league) && Safe(() => DeleteLeague(league))) return;
           break;
         case "Back": return;
       }
     }
   }
 
-  private bool OwnerGuard(League league)
+  // Admins have league-wide management rights — they can manage any league, not
+  // just the ones they own. Role is free text on the account, so match loosely.
+  private bool IsAdmin =>
+      string.Equals(_activeUser?.Role, "Admin", StringComparison.OrdinalIgnoreCase);
+
+  // A league may be managed by its owner or by any admin. Renamed from the old
+  // owner-only check so the gate reflects role-based authorization.
+  private bool ManageGuard(League league)
   {
-    if (_activeUser != null && league.OwnerUserId == _activeUser.UserId) return true;
+    if (_activeUser != null && (league.OwnerUserId == _activeUser.UserId || IsAdmin)) return true;
     AnsiConsole.MarkupLineInterpolated(
-        $"[yellow]Only the league owner (#{league.OwnerUserId}) can manage this league.[/]");
+        $"[yellow]Only the league owner (#{league.OwnerUserId}) or an admin can manage this league.[/]");
     return false;
   }
 
-  // ---- owner-only management, acting on a league we already hold ----
+  // ---- league management (owner or admin), acting on a league we already hold ----
 
   private void ScheduleRaceFor(League league)
   {
@@ -580,6 +665,88 @@ public class MenuApp
     AnsiConsole.MarkupLineInterpolated($"[green]Result recorded:[/] {result}");
     AnsiConsole.MarkupLineInterpolated($"  [grey]League standing now:[/] {registration}");
     AnsiConsole.MarkupLineInterpolated($"  [grey]Driver global stats now:[/] {_userService.GetById(registration.UserId)}");
+  }
+
+  private void DeleteRaceFor(League league)
+  {
+    var races = _raceService.GetByLeague(league.LeagueId).ToList();
+    if (races.Count == 0)
+    {
+      AnsiConsole.MarkupLine("[grey]No races to delete in this league.[/]");
+      return;
+    }
+    ShowRaces(league.LeagueId);
+
+    const string back = "Back";
+    var byLabel = new Dictionary<string, Race>();
+    var prompt = new SelectionPrompt<string>()
+        .Title("[red]Delete race[/] — select a race to remove")
+        .HighlightStyle(new Style(foreground: Color.Red));
+    foreach (var r in races)
+    {
+      string label = $"#{r.RaceId} round {r.Round} — {Markup.Escape(r.Track)}";
+      byLabel[label] = r;
+      prompt.AddChoice(label);
+    }
+    prompt.AddChoice(back);
+
+    string choice = AnsiConsole.Prompt(prompt);
+    if (choice == back) return;
+    var race = byLabel[choice];
+
+    // Warn when results ride along: deleting the race reverts their points/stats too.
+    int resultCount = _resultService.GetByRace(race.RaceId).Count();
+    string warn = resultCount > 0
+        ? $" This also deletes {resultCount} recorded result(s) and reverts the affected drivers' points and stats."
+        : string.Empty;
+    if (!AnsiConsole.Confirm(
+            $"Delete race #{race.RaceId} (round {race.Round}, {Markup.Escape(race.Track)})?{warn} This cannot be undone.",
+            defaultValue: false))
+      return;
+
+    _raceService.Delete(race.RaceId);
+    AnsiConsole.MarkupLineInterpolated($"[green]Deleted race[/] #{race.RaceId}.");
+  }
+
+  private void DeleteResultFor(League league)
+  {
+    var races = _raceService.GetByLeague(league.LeagueId).ToList();
+    var raceById = races.ToDictionary(r => r.RaceId);
+    var results = races.SelectMany(r => _resultService.GetByRace(r.RaceId)).ToList();
+    if (results.Count == 0)
+    {
+      AnsiConsole.MarkupLine("[grey]No results recorded in this league yet.[/]");
+      return;
+    }
+
+    const string back = "Back";
+    var byLabel = new Dictionary<string, Result>();
+    var prompt = new SelectionPrompt<string>()
+        .Title("[red]Delete result[/] — select a result to remove")
+        .HighlightStyle(new Style(foreground: Color.Red));
+    foreach (var res in results.OrderBy(r => raceById[r.RaceId].Round))
+    {
+      var race = raceById[res.RaceId];
+      string driver = DriverName(_registrationService.GetById(res.RegistrationId).UserId);
+      string label = $"#{res.ResultId} round {race.Round} {Markup.Escape(race.Track)} — " +
+                     $"{Markup.Escape(driver)}: P{res.Position}, {res.Points} pts";
+      byLabel[label] = res;
+      prompt.AddChoice(label);
+    }
+    prompt.AddChoice(back);
+
+    string choice = AnsiConsole.Prompt(prompt);
+    if (choice == back) return;
+    var result = byLabel[choice];
+
+    if (!AnsiConsole.Confirm(
+            $"Delete result #{result.ResultId}? This reverts the driver's {result.Points} standings points " +
+            "and this race's effect on their global stats. This cannot be undone.",
+            defaultValue: false))
+      return;
+
+    _resultService.Delete(result.ResultId);
+    AnsiConsole.MarkupLineInterpolated($"[green]Deleted result[/] #{result.ResultId}.");
   }
 
   private void EditLeague(League league)

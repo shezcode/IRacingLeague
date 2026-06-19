@@ -63,4 +63,65 @@ public class ResultService : IResultService
 
         return result;
     }
+
+    public Result GetById(int id)
+    {
+        var result = _results.Get(id);
+        if (result == null)
+            throw new KeyNotFoundException($"Result with id {id} not found.");
+        return result;
+    }
+
+    public IEnumerable<Result> GetByRace(int raceId) =>
+        _results.GetAll().Where(r => r.RaceId == raceId).ToList();
+
+    public void Delete(int resultId)
+    {
+        var result = _results.Get(resultId)
+            ?? throw new KeyNotFoundException($"Result with id {resultId} not found.");
+        RevertEffects(result);
+        _results.Delete(resultId);
+        _results.SaveChanges();
+    }
+
+    public void DeleteByRace(int raceId) =>
+        DeleteWhere(r => r.RaceId == raceId);
+
+    public void DeleteByRegistration(int registrationId) =>
+        DeleteWhere(r => r.RegistrationId == registrationId);
+
+    private void DeleteWhere(Func<Result, bool> predicate)
+    {
+        var doomed = _results.GetAll().Where(predicate).ToList();
+        foreach (var result in doomed)
+        {
+            RevertEffects(result);
+            _results.Delete(result.ResultId);
+        }
+        if (doomed.Count > 0)
+            _results.SaveChanges();
+    }
+
+    // Undo the standings points and global driver stats a result applied — the exact
+    // inverse of ApplyResult — so removing a result can't leave inflated points or
+    // stats behind. The parents are null-checked: when a result is dropped as part
+    // of deleting its registration or its driver, that parent may already be gone.
+    private void RevertEffects(Result result)
+    {
+        var registration = _registrations.Get(result.RegistrationId);
+        if (registration == null)
+            return;
+
+        registration.Points -= result.Points;
+        _registrations.Update(registration);
+        _registrations.SaveChanges();
+
+        var user = _users.Get(registration.UserId);
+        if (user == null)
+            return;
+
+        user.UndoRaceOutcome(result.Position, result.IncidentPoints, result.LapsCompleted);
+        _users.Update(user);
+        _users.SaveChanges();
+    }
 }
